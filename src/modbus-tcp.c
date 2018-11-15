@@ -682,7 +682,8 @@ int modbus_tcp_accept(modbus_t *ctx, int *s)
         printf("The client connection from %s is accepted\n",
                inet_ntoa(addr.sin_addr));
     }
-
+    printf("The client connection from %s is accepted\n",
+               inet_ntoa(addr.sin_addr));
     return ctx->s;
 }
 
