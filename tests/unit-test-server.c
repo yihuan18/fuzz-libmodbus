@@ -11,25 +11,30 @@
 #include <errno.h>
 #include <modbus.h>
 #ifdef _WIN32
-# include <winsock2.h>
+#include <winsock2.h>
 #else
-# include <sys/socket.h>
+#include <sys/socket.h>
 #endif
 
 /* For MinGW */
 #ifndef MSG_NOSIGNAL
-# define MSG_NOSIGNAL 0
+#define MSG_NOSIGNAL 0
 #endif
 
 #include "unit-test.h"
 
-enum {
+//yihuan add
+#include "modbus.c"
+#include "modbus-tcp.c"
+
+enum
+{
     TCP,
     TCP_PI,
     RTU
 };
 
-int main(int argc, char*argv[])
+int main(int argc, char *argv[])
 {
     int s = -1;
     modbus_t *ctx;
@@ -40,29 +45,56 @@ int main(int argc, char*argv[])
     uint8_t *query;
     int header_length;
 
-    if (argc > 1) {
-        if (strcmp(argv[1], "tcp") == 0) {
+    /* yihuan defination  begin*/
+    modbus_t *ctx_client = NULL;
+    int req_length_yihuan;
+    ctx_client = modbus_new_tcp("127.0.0.1", 1502);
+
+    FILE *fp = fopen("/home/yihuan/modbus_log", "a+");
+    if (fp==0) { printf("can't open file\n"); return 0;}
+    /* yihuand defination end */
+
+    if (argc > 1)
+    {
+        if (strcmp(argv[1], "tcp") == 0)
+        {
             use_backend = TCP;
-        } else if (strcmp(argv[1], "tcppi") == 0) {
+        }
+        else if (strcmp(argv[1], "tcppi") == 0)
+        {
             use_backend = TCP_PI;
-        } else if (strcmp(argv[1], "rtu") == 0) {
+        }
+        else if (strcmp(argv[1], "rtu") == 0)
+        {
             use_backend = RTU;
-        } else {
+        }
+        else
+        {
+            fseek(fp, 0, SEEK_END);
+            char sz_add[] = "Usage:[tcp|tcppi|rtu] - Modbus server for unit testing\n";
+            fwrite(sz_add, strlen(sz_add), 1, fp);
             printf("Usage:\n  %s [tcp|tcppi|rtu] - Modbus server for unit testing\n\n", argv[0]);
             return -1;
         }
-    } else {
+    }
+    else
+    {
         /* By default */
         use_backend = TCP;
     }
 
-    if (use_backend == TCP) {
+    if (use_backend == TCP)
+    {
         ctx = modbus_new_tcp("127.0.0.1", 1502);
         query = malloc(MODBUS_TCP_MAX_ADU_LENGTH);
-    } else if (use_backend == TCP_PI) {
+    }
+    else if (use_backend == TCP_PI)
+    {
         ctx = modbus_new_tcp_pi("::0", "1502");
         query = malloc(MODBUS_TCP_MAX_ADU_LENGTH);
-    } else {
+    }
+    else
+    {
         ctx = modbus_new_rtu("/dev/ttyUSB0", 115200, 'N', 8, 1);
         modbus_set_slave(ctx, SERVER_ID);
         query = malloc(MODBUS_RTU_MAX_ADU_LENGTH);
@@ -76,7 +108,8 @@ int main(int argc, char*argv[])
         UT_INPUT_BITS_ADDRESS, UT_INPUT_BITS_NB,
         UT_REGISTERS_ADDRESS, UT_REGISTERS_NB_MAX,
         UT_INPUT_REGISTERS_ADDRESS, UT_INPUT_REGISTERS_NB);
-    if (mb_mapping == NULL) {
+    if (mb_mapping == NULL)
+    {
         fprintf(stderr, "Failed to allocate the mapping: %s\n",
                 modbus_strerror(errno));
         modbus_free(ctx);
@@ -91,88 +124,131 @@ int main(int argc, char*argv[])
                                UT_INPUT_BITS_TAB);
 
     /* Initialize values of INPUT REGISTERS */
-    for (i=0; i < UT_INPUT_REGISTERS_NB; i++) {
-        mb_mapping->tab_input_registers[i] = UT_INPUT_REGISTERS_TAB[i];;
+    for (i = 0; i < UT_INPUT_REGISTERS_NB; i++)
+    {
+        mb_mapping->tab_input_registers[i] = UT_INPUT_REGISTERS_TAB[i];
+        ;
     }
 
-    if (use_backend == TCP) {
+    if (use_backend == TCP)
+    {
         s = modbus_tcp_listen(ctx, 1);
+
+        /* yihuan connect start */
+        if (modbus_connect(ctx_client) == -1)
+        {
+            fprintf(stderr, "Connection failed: %s\n", modbus_strerror(errno));
+            modbus_free(ctx_client);
+            return -1;
+        }
+        /* yihuan connect end */
+
         modbus_tcp_accept(ctx, &s);
-    } else if (use_backend == TCP_PI) {
+    }
+    else if (use_backend == TCP_PI)
+    {
         s = modbus_tcp_pi_listen(ctx, 1);
         modbus_tcp_pi_accept(ctx, &s);
-    } else {
+    }
+    else
+    {
         rc = modbus_connect(ctx);
-        if (rc == -1) {
+        if (rc == -1)
+        {
             fprintf(stderr, "Unable to connect %s\n", modbus_strerror(errno));
             modbus_free(ctx);
             return -1;
         }
     }
 
-    for (;;) {
-        do {
+    
+    //for (;;) {
+    /* yihuan modify 'for' to AFL 'while' loop */
+    int yihuan_count = 1;
+    while (__AFL_LOOP(1000))
+    //while(1)
+    {
+        /* yihuan send msg as client start */
+        uint8_t send_buf[1500];
+        memset(send_buf, 0, 1500);
+        req_length_yihuan = read(0, send_buf, 1500); //read request from stdin of AFL
+        send_msg(ctx_client, send_buf, req_length_yihuan);
+        /* yihuan send msg as client end */
+
+        do
+        {
             rc = modbus_receive(ctx, query);
             /* Filtered queries return 0 */
         } while (rc == 0);
+        
+        fseek(fp, 0, SEEK_END);
+        fwrite("server received!\n", strlen("server received!\n"), 1, fp);
 
         /* The connection is not closed on errors which require on reply such as
            bad CRC in RTU. */
-        if (rc == -1 && errno != EMBBADCRC) {
+        if (rc == -1 && errno != EMBBADCRC)
+        {
             /* Quit */
             break;
         }
 
         /* Special server behavior to test client */
-        if (query[header_length] == 0x03) {
+        if (query[header_length] == 0x03)
+        {
             /* Read holding registers */
 
-            if (MODBUS_GET_INT16_FROM_INT8(query, header_length + 3)
-                == UT_REGISTERS_NB_SPECIAL) {
+            if (MODBUS_GET_INT16_FROM_INT8(query, header_length + 3) == UT_REGISTERS_NB_SPECIAL)
+            {
                 printf("Set an incorrect number of values\n");
                 MODBUS_SET_INT16_TO_INT8(query, header_length + 3,
                                          UT_REGISTERS_NB_SPECIAL - 1);
-            } else if (MODBUS_GET_INT16_FROM_INT8(query, header_length + 1)
-                       == UT_REGISTERS_ADDRESS_SPECIAL) {
+            }
+            else if (MODBUS_GET_INT16_FROM_INT8(query, header_length + 1) == UT_REGISTERS_ADDRESS_SPECIAL)
+            {
                 printf("Reply to this special register address by an exception\n");
                 modbus_reply_exception(ctx, query,
                                        MODBUS_EXCEPTION_SLAVE_OR_SERVER_BUSY);
                 continue;
-            } else if (MODBUS_GET_INT16_FROM_INT8(query, header_length + 1)
-                       == UT_REGISTERS_ADDRESS_INVALID_TID_OR_SLAVE) {
+            }
+            else if (MODBUS_GET_INT16_FROM_INT8(query, header_length + 1) == UT_REGISTERS_ADDRESS_INVALID_TID_OR_SLAVE)
+            {
                 const int RAW_REQ_LENGTH = 5;
                 uint8_t raw_req[] = {
                     (use_backend == RTU) ? INVALID_SERVER_ID : 0xFF,
                     0x03,
-                    0x02, 0x00, 0x00
-                };
+                    0x02, 0x00, 0x00};
 
                 printf("Reply with an invalid TID or slave\n");
                 modbus_send_raw_request(ctx, raw_req, RAW_REQ_LENGTH * sizeof(uint8_t));
                 continue;
-            } else if (MODBUS_GET_INT16_FROM_INT8(query, header_length + 1)
-                       == UT_REGISTERS_ADDRESS_SLEEP_500_MS) {
+            }
+            else if (MODBUS_GET_INT16_FROM_INT8(query, header_length + 1) == UT_REGISTERS_ADDRESS_SLEEP_500_MS)
+            {
                 printf("Sleep 0.5 s before replying\n");
                 usleep(500000);
-            } else if (MODBUS_GET_INT16_FROM_INT8(query, header_length + 1)
-                       == UT_REGISTERS_ADDRESS_BYTE_SLEEP_5_MS) {
+            }
+            else if (MODBUS_GET_INT16_FROM_INT8(query, header_length + 1) == UT_REGISTERS_ADDRESS_BYTE_SLEEP_5_MS)
+            {
                 /* Test low level only available in TCP mode */
                 /* Catch the reply and send reply byte a byte */
                 uint8_t req[] = "\x00\x1C\x00\x00\x00\x05\xFF\x03\x02\x00\x00";
                 int req_length = 11;
                 int w_s = modbus_get_socket(ctx);
-                if (w_s == -1) {
+                if (w_s == -1)
+                {
                     fprintf(stderr, "Unable to get a valid socket in special test\n");
                     continue;
                 }
 
                 /* Copy TID */
                 req[1] = query[1];
-                for (i=0; i < req_length; i++) {
+                for (i = 0; i < req_length; i++)
+                {
                     printf("(%.2X)", req[i]);
                     usleep(5000);
-                    rc = send(w_s, (const char*)(req + i), 1, MSG_NOSIGNAL);
-                    if (rc == -1) {
+                    rc = send(w_s, (const char *)(req + i), 1, MSG_NOSIGNAL);
+                    if (rc == -1)
+                    {
                         break;
                     }
                 }
@@ -181,15 +257,19 @@ int main(int argc, char*argv[])
         }
 
         rc = modbus_reply(ctx, query, rc, mb_mapping);
-        if (rc == -1) {
+        if (rc == -1)
+        {
             break;
         }
     }
 
-    printf("Quit the loop: %s\n", modbus_strerror(errno));
+    if(rc == -1)
+        printf("Quit the loop: %s\n", modbus_strerror(errno));
 
-    if (use_backend == TCP) {
-        if (s != -1) {
+    if (use_backend == TCP)
+    {
+        if (s != -1)
+        {
             close(s);
         }
     }
